@@ -322,7 +322,12 @@ async def quantize(request: Request):
 
     phase = body.get("phase")
     if phase == "freeze":
+        reason = validate_freeze(body)
+        if reason is not None:
+            print(f"[DEBUG] freeze validation failed: {reason} | body={json.dumps(body)[:2000]}")
         return handle_freeze(body)
     if phase == "select":
         return handle_select(body)
+
+    print(f"[DEBUG] unknown/missing phase | body={json.dumps(body)[:2000]}")
     return err(400, "INVALID_INPUT")
