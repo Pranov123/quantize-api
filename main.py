@@ -19,8 +19,8 @@ app.add_middleware(
 FREEZE_STORE: dict[str, dict[str, Any]] = {}
 
 
-def err(code_status: int, code: str) -> JSONResponse:
-    return JSONResponse(status_code=code_status, content={"error": code})
+def err(status_code: int, code: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": code})
 
 
 def sha256_hex(data: bytes) -> str:
@@ -64,17 +64,9 @@ def validate_freeze(body: dict) -> Optional[str]:
         if not isinstance(c, dict) or not is_str(c.get("name")):
             return "bad candidate"
         names.append(c["name"])
-        files = c.get("files")
-        if not isinstance(files, dict) or len(files) == 0:
-            return "bad files"
-        for fn, fv in files.items():
-            if not is_str(fn) or not isinstance(fv, str):
-                return "bad file"
-        if "loadable" in c and not isinstance(c.get("loadable"), bool):
-            return "bad loadable"
-        for key in ("calibrationDigest", "tokenizerDigest", "unsupportedReason"):
-            if key in c and c.get(key) is not None and not is_str(c.get(key)):
-                return f"bad {key}"
+        # files/loadable/digests are intentionally NOT validated here.
+        # Malformed files is a per-candidate "invalid" outcome (reasonCode
+        # INVALID_INPUT), not a whole-request 400 — see compute_candidate().
 
     if len(set(names)) != len(names):
         return "dup names"
@@ -95,7 +87,24 @@ def compute_inventory(files: dict):
 
 def compute_candidate(c: dict, req: dict) -> dict:
     name = c["name"]
-    inventory, total_bytes, digest = compute_inventory(c["files"])
+    files = c.get("files")
+    files_valid = (
+        isinstance(files, dict)
+        and len(files) > 0
+        and all(is_str(fn) and isinstance(fv, str) for fn, fv in files.items())
+    )
+
+    if not files_valid:
+        return {
+            "name": name,
+            "status": "invalid",
+            "inventory": [],
+            "totalBytes": None,
+            "packageDigest": None,
+            "reasonCodes": ["INVALID_INPUT"],
+        }
+
+    inventory, total_bytes, digest = compute_inventory(files)
     codes = []
     reason = c.get("unsupportedReason")
 
@@ -322,12 +331,7 @@ async def quantize(request: Request):
 
     phase = body.get("phase")
     if phase == "freeze":
-        reason = validate_freeze(body)
-        if reason is not None:
-            print(f"[DEBUG] freeze validation failed: {reason} | body={json.dumps(body)[:2000]}")
         return handle_freeze(body)
     if phase == "select":
         return handle_select(body)
-
-    print(f"[DEBUG] unknown/missing phase | body={json.dumps(body)[:2000]}")
     return err(400, "INVALID_INPUT")
